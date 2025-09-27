@@ -6,9 +6,47 @@ import re
 
 app = Flask(__name__)
 
-def parse_query(query):
-    # Simple date extraction using dateparser
+def parse_query(query, use_regex=False):
+    """
+    Parse search query with support for:
+    - Exact phrases in quotes
+    - Wildcard patterns with *
+    - Negative keywords with -
+    - Date extraction
+    - Optional regex mode
+    """
     dates = []
+    exact_phrases = []
+    wildcard_patterns = []
+    negative_keywords = []
+    positive_keywords = []
+    
+    # Extract quoted phrases first
+    import re
+    quoted_pattern = r'"([^"]*)"'
+    quoted_matches = re.findall(quoted_pattern, query)
+    for phrase in quoted_matches:
+        exact_phrases.append(phrase.strip())
+        # Remove quoted phrases from query for further processing
+        query = query.replace(f'"{phrase}"', '')
+    
+    # Extract negative keywords (prefixed with -)
+    negative_pattern = r'-(\S+)'
+    negative_matches = re.findall(negative_pattern, query)
+    for keyword in negative_matches:
+        negative_keywords.append(keyword.strip())
+        # Remove negative keywords from query
+        query = query.replace(f'-{keyword}', '')
+    
+    # Extract wildcard patterns (containing *)
+    wildcard_pattern = r'\S*\*\S*'
+    wildcard_matches = re.findall(wildcard_pattern, query)
+    for pattern in wildcard_matches:
+        wildcard_patterns.append(pattern.strip())
+        # Remove wildcard patterns from query
+        query = query.replace(pattern, '')
+    
+    # Extract dates from remaining query
     words = query.split()
     current_phrase = []
     
@@ -20,62 +58,103 @@ def parse_query(query):
             dates.append(parsed_date)
             current_phrase = []
     
-    # Extract keywords (everything that's not part of a date)
-    keywords = []
+    # Extract remaining positive keywords
     for word in words:
-        # Skip words that are part of a date phrase
         if not any(word in phrase for phrase in current_phrase):
-            # Add the word as a keyword if it's not empty and not just whitespace
             if word.strip():
-                keywords.append(word.strip())
+                positive_keywords.append(word.strip())
     
-    # If no dates were found, use all words as keywords
-    if not dates and not keywords:
-        keywords = [word.strip() for word in words if word.strip()]
+    # If no dates were found and no other keywords, use all remaining words
+    if not dates and not positive_keywords and not exact_phrases and not wildcard_patterns:
+        positive_keywords = [word.strip() for word in words if word.strip()]
     
-    return dates, keywords
+    return {
+        'dates': dates,
+        'exact_phrases': exact_phrases,
+        'wildcard_patterns': wildcard_patterns,
+        'negative_keywords': negative_keywords,
+        'positive_keywords': positive_keywords,
+        'use_regex': use_regex
+    }
 
-def construct_sql_query(dates, keywords):
+def construct_sql_query(parsed_query):
     query_parts = []
     params = []
     
-    # Add keyword search if keywords exist
-    if keywords:
-        # Create conditions for each keyword with word boundaries
-        word_conditions = []
-        for keyword in keywords:
-            # Use word boundaries to ensure exact word matches
-            # The pattern matches:
-            # 1. Word at start of text
-            # 2. Word in middle of text
-            # 3. Word at end of text
-            # 4. Word followed by punctuation
-            word_conditions.append("""
-                (LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?) OR
-                 LOWER(m.text) LIKE LOWER(?))
-            """)
-            params.extend([
-                f'{keyword} %',  # word at start
-                f'% {keyword} %',  # word in middle
-                f'% {keyword}',  # word at end
-                f'% {keyword}.%',  # word followed by period
-                f'% {keyword},%',  # word followed by comma
-                f'% {keyword};%',  # word followed by semicolon
-                f'% {keyword}:%',  # word followed by colon
-                f'% {keyword}?%'   # word followed by question mark
-            ])
-        query_parts.append('(' + ' AND '.join(word_conditions) + ')')
+    # Handle exact phrases
+    if parsed_query['exact_phrases']:
+        phrase_conditions = []
+        for phrase in parsed_query['exact_phrases']:
+            if parsed_query['use_regex']:
+                phrase_conditions.append("m.text REGEXP ?")
+                params.append(re.escape(phrase))
+            else:
+                phrase_conditions.append("LOWER(m.text) LIKE LOWER(?)")
+                params.append(f'%{phrase}%')
+        query_parts.append('(' + ' AND '.join(phrase_conditions) + ')')
     
-    # Add date filtering if dates exist
-    if dates:
-        # Use the first date as a reference point
-        date = dates[0]
+    # Handle wildcard patterns
+    if parsed_query['wildcard_patterns']:
+        wildcard_conditions = []
+        for pattern in parsed_query['wildcard_patterns']:
+            if parsed_query['use_regex']:
+                # Convert wildcard to regex
+                regex_pattern = pattern.replace('*', '.*')
+                wildcard_conditions.append("m.text REGEXP ?")
+                params.append(regex_pattern)
+            else:
+                # Convert wildcard to SQL LIKE
+                like_pattern = pattern.replace('*', '%')
+                wildcard_conditions.append("LOWER(m.text) LIKE LOWER(?)")
+                params.append(like_pattern)
+        query_parts.append('(' + ' AND '.join(wildcard_conditions) + ')')
+    
+    # Handle positive keywords
+    if parsed_query['positive_keywords']:
+        keyword_conditions = []
+        for keyword in parsed_query['positive_keywords']:
+            if parsed_query['use_regex']:
+                keyword_conditions.append("m.text REGEXP ?")
+                params.append(re.escape(keyword))
+            else:
+                # Use word boundaries for exact word matches
+                keyword_conditions.append("""
+                    (LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?) OR
+                     LOWER(m.text) LIKE LOWER(?))
+                """)
+                params.extend([
+                    f'{keyword} %',  # word at start
+                    f'% {keyword} %',  # word in middle
+                    f'% {keyword}',  # word at end
+                    f'% {keyword}.%',  # word followed by period
+                    f'% {keyword},%',  # word followed by comma
+                    f'% {keyword};%',  # word followed by semicolon
+                    f'% {keyword}:%',  # word followed by colon
+                    f'% {keyword}?%'   # word followed by question mark
+                ])
+        query_parts.append('(' + ' AND '.join(keyword_conditions) + ')')
+    
+    # Handle negative keywords (exclude)
+    if parsed_query['negative_keywords']:
+        negative_conditions = []
+        for keyword in parsed_query['negative_keywords']:
+            if parsed_query['use_regex']:
+                negative_conditions.append("m.text NOT REGEXP ?")
+                params.append(re.escape(keyword))
+            else:
+                negative_conditions.append("LOWER(m.text) NOT LIKE LOWER(?)")
+                params.append(f'%{keyword}%')
+        query_parts.append('(' + ' AND '.join(negative_conditions) + ')')
+    
+    # Handle date filtering
+    if parsed_query['dates']:
+        date = parsed_query['dates'][0]
         query_parts.append("timestamp BETWEEN ? AND ?")
         params.extend([
             (date - timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -102,6 +181,7 @@ def construct_sql_query(dates, keywords):
     
     print(f"Debug - SQL Query: {count_query}")
     print(f"Debug - Parameters: {params}")
+    print(f"Debug - Parsed Query: {parsed_query}")
     
     return count_query, messages_query, params
 
@@ -109,21 +189,26 @@ def construct_sql_query(dates, keywords):
 def index():
     return send_from_directory('static', 'index.html')
 
+@app.route('/thread/<conversation_id>/view')
+def thread_view(conversation_id):
+    """Serve the thread view page"""
+    return send_from_directory('static', 'thread.html')
+
 @app.route('/search')
 def search():
     query = request.args.get('query', '')
     limit = request.args.get('limit', '10')
+    use_regex = request.args.get('regex', 'false').lower() == 'true'
     
     if not query:
         return jsonify({'total_count': 0, 'messages': []})
     
-    # Parse query
-    dates, keywords = parse_query(query)
-    print(f"Debug - Parsed keywords: {keywords}")
-    print(f"Debug - Parsed dates: {dates}")
+    # Parse query with new enhanced parser
+    parsed_query = parse_query(query, use_regex)
+    print(f"Debug - Parsed query: {parsed_query}")
     
     # Construct and execute SQL queries
-    count_query, messages_query, params = construct_sql_query(dates, keywords)
+    count_query, messages_query, params = construct_sql_query(parsed_query)
     
     try:
         conn = sqlite3.connect('chatgpt_export.db')
@@ -173,15 +258,16 @@ def search():
 def export_results():
     query = request.args.get('query', '')
     limit = request.args.get('limit', 'all')
+    use_regex = request.args.get('regex', 'false').lower() == 'true'
     
     if not query:
         return jsonify({'error': 'Query parameter is required'}), 400
     
-    # Parse query
-    dates, keywords = parse_query(query)
+    # Parse query with new enhanced parser
+    parsed_query = parse_query(query, use_regex)
     
     # Construct and execute SQL queries
-    count_query, messages_query, params = construct_sql_query(dates, keywords)
+    count_query, messages_query, params = construct_sql_query(parsed_query)
     
     try:
         conn = sqlite3.connect('chatgpt_export.db')
@@ -251,6 +337,124 @@ def generate_markdown_export(query, messages):
 
 **Conversation ID:** `{msg['conversation_id']}`  
 **Sender:** {sender}  
+**Timestamp:** {formatted_time}
+
+{msg['text']}
+
+---
+
+"""
+    
+    return markdown
+
+@app.route('/thread/<conversation_id>')
+def get_thread(conversation_id):
+    """Get all messages in a specific conversation thread"""
+    try:
+        conn = sqlite3.connect('chatgpt_export.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get all messages for this conversation, ordered by timestamp
+        cursor.execute('''
+        SELECT id, conversation_id, timestamp, sender, text
+        FROM messages 
+        WHERE conversation_id = ?
+        ORDER BY timestamp ASC
+        ''', (conversation_id,))
+        
+        rows = cursor.fetchall()
+        messages = [dict(row) for row in rows]
+        
+        if not messages:
+            return jsonify({'error': 'Conversation not found'}), 404
+        
+        return jsonify({
+            'conversation_id': conversation_id,
+            'message_count': len(messages),
+            'messages': messages
+        })
+        
+    except Exception as e:
+        print(f"Thread error: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/thread/<conversation_id>/export')
+def export_thread(conversation_id):
+    """Export all messages in a conversation thread as Markdown"""
+    try:
+        conn = sqlite3.connect('chatgpt_export.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get all messages for this conversation
+        cursor.execute('''
+        SELECT id, conversation_id, timestamp, sender, text
+        FROM messages 
+        WHERE conversation_id = ?
+        ORDER BY timestamp ASC
+        ''', (conversation_id,))
+        
+        rows = cursor.fetchall()
+        messages = [dict(row) for row in rows]
+        
+        if not messages:
+            return jsonify({'error': 'Conversation not found'}), 404
+        
+        # Generate Markdown content
+        markdown_content = generate_thread_markdown_export(conversation_id, messages)
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"chatgpt_thread_{conversation_id[:8]}_{timestamp}.md"
+        
+        return Response(
+            markdown_content,
+            mimetype='text/markdown',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'text/markdown; charset=utf-8'
+            }
+        )
+        
+    except Exception as e:
+        print(f"Thread export error: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+def generate_thread_markdown_export(conversation_id, messages):
+    """Generate Markdown content for a conversation thread"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    markdown = f"""# ChatGPT Conversation Thread
+
+**Conversation ID:** `{conversation_id}`  
+**Export Date:** {timestamp}  
+**Total Messages:** {len(messages)}
+
+---
+
+"""
+    
+    for i, msg in enumerate(messages, 1):
+        # Format timestamp
+        try:
+            msg_time = datetime.fromisoformat(msg['timestamp'].replace('Z', '+00:00'))
+            formatted_time = msg_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+        except:
+            formatted_time = msg['timestamp']
+        
+        # Determine sender display
+        sender = "You" if msg['sender'] == 'user' else "Assistant"
+        if msg['sender'] == 'tool':
+            sender = "Tool"
+        
+        # Add message to markdown
+        markdown += f"""## Message {i} - {sender}
+
 **Timestamp:** {formatted_time}
 
 {msg['text']}

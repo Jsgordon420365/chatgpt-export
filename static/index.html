@@ -149,13 +149,49 @@
             color: #666;
             font-weight: bold;
         }
+        .search-options {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        .checkbox-label input[type="checkbox"] {
+            margin: 0;
+        }
+        .search-help {
+            font-size: 12px;
+            color: #666;
+        }
+        .search-help ul {
+            margin: 5px 0 0 0;
+            padding-left: 20px;
+        }
+        .search-help li {
+            margin: 2px 0;
+        }
+        .search-help code {
+            background-color: #e9ecef;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 11px;
+        }
     </style>
 </head>
 <body>
     <div class="search-container">
         <h1>ChatGPT Export Search</h1>
         <div class="search-row">
-            <input type="text" id="query" class="search-input" placeholder="Search for messages (e.g., 'python async from last week')">
+            <input type="text" id="query" class="search-input" placeholder="Search for messages (e.g., 'python async from last week', 'exact phrase', 202509*, -exclude)">
             <select id="limit" class="results-limit">
                 <option value="10">10 results</option>
                 <option value="25">25 results</option>
@@ -165,6 +201,20 @@
             </select>
             <button onclick="search()" class="search-button">Search</button>
         </div>
+        <div class="search-options">
+            <label class="checkbox-label">
+                <input type="checkbox" id="use-regex"> Use Regex
+            </label>
+            <div class="search-help">
+                <strong>Search Help:</strong>
+                <ul>
+                    <li><code>"exact phrase"</code> - Search for exact phrases</li>
+                    <li><code>202509*</code> - Wildcard search (matches 20250901, 20250927, etc.)</li>
+                    <li><code>-exclude</code> - Exclude messages containing this word</li>
+                    <li><code>from last week</code> - Date-based filtering</li>
+                </ul>
+            </div>
+        </div>
     </div>
     
     <div class="results-container" id="results">
@@ -173,6 +223,7 @@
         <div class="results-header" id="results-header" style="display: none;">
             <div class="selection-info" id="selection-info">0 messages selected</div>
             <div class="message-actions">
+                <button class="export-button" id="view-threads-button" onclick="viewAllThreads()">View All Threads</button>
                 <button class="export-button" id="export-all-button" onclick="exportAllResults()">Export All Results</button>
                 <button class="export-button" id="export-button" disabled onclick="exportSelected()">Export Selected</button>
             </div>
@@ -201,8 +252,11 @@
             selectedMessages.clear();
             updateSelectionInfo();
 
+            // Get regex setting
+            const useRegex = document.getElementById('use-regex').checked;
+            
             // Make API request
-            fetch(`/search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`)
+            fetch(`/search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}&regex=${useRegex}`)
                 .then(response => response.json())
                 .then(data => {
                     loading.style.display = 'none';
@@ -249,8 +303,16 @@
                         const timestamp = document.createElement('span');
                         timestamp.textContent = ' • ' + new Date(msg.timestamp).toLocaleString();
                         
+                        const threadLink = document.createElement('a');
+                        threadLink.href = `/thread/${msg.conversation_id}/view`;
+                        threadLink.target = '_blank';
+                        threadLink.className = 'thread-link';
+                        threadLink.textContent = 'View Thread';
+                        threadLink.style.cssText = 'margin-left: 10px; color: #10a37f; text-decoration: none; font-size: 0.8em;';
+                        
                         leftHeader.appendChild(sender);
                         leftHeader.appendChild(timestamp);
+                        leftHeader.appendChild(threadLink);
                         
                         const exportButton = document.createElement('button');
                         exportButton.className = 'export-button';
@@ -315,9 +377,10 @@
             }
 
             const limit = document.getElementById('limit').value;
+            const useRegex = document.getElementById('use-regex').checked;
             
             // Create download link
-            const exportUrl = `/export?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`;
+            const exportUrl = `/export?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}&regex=${useRegex}`;
             
             // Create temporary link and trigger download
             const link = document.createElement('a');
@@ -326,6 +389,58 @@
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+        }
+
+        function viewAllThreads() {
+            // Get all unique conversation IDs from current search results
+            const messageElements = document.querySelectorAll('.message');
+            const conversationIds = new Set();
+            
+            messageElements.forEach(msgEl => {
+                const threadLink = msgEl.querySelector('.thread-link');
+                if (threadLink) {
+                    const href = threadLink.getAttribute('href');
+                    const conversationId = href.split('/')[2]; // Extract ID from /thread/{id}/view
+                    conversationIds.add(conversationId);
+                }
+            });
+            
+            if (conversationIds.size === 0) {
+                alert('No threads found in current search results');
+                return;
+            }
+            
+            if (conversationIds.size === 1) {
+                // If only one thread, open it directly
+                const conversationId = Array.from(conversationIds)[0];
+                window.open(`/thread/${conversationId}/view`, '_blank');
+            } else {
+                // If multiple threads, show a dialog to choose
+                const threadList = Array.from(conversationIds).map(id => 
+                    `<li><a href="/thread/${id}/view" target="_blank">Thread ${id.substring(0, 8)}...</a></li>`
+                ).join('');
+                
+                const dialog = document.createElement('div');
+                dialog.innerHTML = `
+                    <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                                background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                                z-index: 1000; max-width: 400px; width: 90%;">
+                        <h3>Choose a Thread to View</h3>
+                        <p>Found ${conversationIds.size} unique threads in your search results:</p>
+                        <ul style="list-style: none; padding: 0;">
+                            ${threadList}
+                        </ul>
+                        <button onclick="this.parentElement.parentElement.remove()" 
+                                style="background: #6c757d; color: white; border: none; padding: 8px 16px; 
+                                       border-radius: 4px; cursor: pointer; margin-top: 10px;">
+                            Close
+                        </button>
+                    </div>
+                    <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                                background: rgba(0,0,0,0.5); z-index: 999;"></div>
+                `;
+                document.body.appendChild(dialog);
+            }
         }
 
         // Add enter key support for search

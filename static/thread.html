@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatGPT Thread View</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .thread-container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .thread-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .thread-info h1 {
+            margin: 0;
+            color: #333;
+            font-size: 1.5em;
+        }
+        .thread-meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        .thread-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .back-button {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-button:hover {
+            background-color: #5a6268;
+        }
+        .export-button {
+            background-color: #10a37f;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .export-button:hover {
+            background-color: #0d8c6d;
+        }
+        .filter-container {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border: 1px solid #e9ecef;
+        }
+        .filter-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .filter-input {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .filter-button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .filter-button:hover {
+            background-color: #0056b3;
+        }
+        .filter-button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .clear-filter {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .clear-filter:hover {
+            background-color: #c82333;
+        }
+        .filter-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #ddd;
+        }
+        .message.user {
+            background-color: #e3f2fd;
+            border-left-color: #2196f3;
+        }
+        .message.assistant {
+            background-color: #f3e5f5;
+            border-left-color: #9c27b0;
+        }
+        .message.tool {
+            background-color: #fff3e0;
+            border-left-color: #ff9800;
+        }
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .message-sender {
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .message.user .message-sender {
+            color: #1976d2;
+        }
+        .message.assistant .message-sender {
+            color: #7b1fa2;
+        }
+        .message.tool .message-sender {
+            color: #f57c00;
+        }
+        .message-timestamp {
+            font-size: 0.8em;
+            color: #666;
+        }
+        .message-text {
+            line-height: 1.6;
+            white-space: pre-wrap;
+            font-size: 0.95em;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            color: #dc3545;
+            padding: 15px;
+            background-color: #f8d7da;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .no-messages {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-style: italic;
+        }
+        .message-count {
+            background-color: #e9ecef;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            color: #495057;
+        }
+    </style>
+</head>
+<body>
+    <div class="thread-container">
+        <div class="thread-header">
+            <div class="thread-info">
+                <h1>ChatGPT Conversation Thread</h1>
+                <div class="thread-meta">
+                    <span id="conversation-id">Loading...</span>
+                    <span class="message-count" id="message-count">0 messages</span>
+                </div>
+            </div>
+            <div class="thread-actions">
+                <a href="/" class="back-button">← Back to Search</a>
+                <button class="export-button" onclick="exportThread()">Export Thread</button>
+            </div>
+        </div>
+
+        <div class="filter-container">
+            <div class="filter-row">
+                <input type="text" id="filter-input" class="filter-input" placeholder="Filter messages within this thread...">
+                <button class="filter-button" onclick="applyFilter()">Filter</button>
+                <button class="clear-filter" onclick="clearFilter()">Clear</button>
+            </div>
+            <div class="filter-info" id="filter-info">Showing all messages</div>
+        </div>
+
+        <div id="messages-container">
+            <div class="loading" id="loading">Loading conversation...</div>
+            <div id="error" class="error" style="display: none;"></div>
+            <div id="messages"></div>
+        </div>
+    </div>
+
+    <script>
+        let conversationId = null;
+        let allMessages = [];
+        let filteredMessages = [];
+        let currentFilter = '';
+
+        // Get conversation ID from URL
+        const pathParts = window.location.pathname.split('/');
+        conversationId = pathParts[pathParts.length - 1];
+
+        // Load thread data
+        async function loadThread() {
+            try {
+                const response = await fetch(`/thread/${conversationId}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+                
+                allMessages = data.messages;
+                filteredMessages = [...allMessages];
+                
+                document.getElementById('conversation-id').textContent = `ID: ${data.conversation_id}`;
+                document.getElementById('message-count').textContent = `${data.message_count} messages`;
+                
+                displayMessages();
+                
+            } catch (error) {
+                showError('Failed to load conversation: ' + error.message);
+            }
+        }
+
+        function displayMessages() {
+            const container = document.getElementById('messages');
+            const loading = document.getElementById('loading');
+            
+            loading.style.display = 'none';
+            
+            if (filteredMessages.length === 0) {
+                container.innerHTML = '<div class="no-messages">No messages match your filter</div>';
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            filteredMessages.forEach((msg, index) => {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${msg.sender}`;
+                
+                const header = document.createElement('div');
+                header.className = 'message-header';
+                
+                const sender = document.createElement('div');
+                sender.className = 'message-sender';
+                sender.textContent = msg.sender === 'user' ? 'You' : 
+                                   msg.sender === 'assistant' ? 'Assistant' : 'Tool';
+                
+                const timestamp = document.createElement('div');
+                timestamp.className = 'message-timestamp';
+                timestamp.textContent = new Date(msg.timestamp).toLocaleString();
+                
+                header.appendChild(sender);
+                header.appendChild(timestamp);
+                
+                const text = document.createElement('div');
+                text.className = 'message-text';
+                text.textContent = msg.text;
+                
+                messageDiv.appendChild(header);
+                messageDiv.appendChild(text);
+                
+                container.appendChild(messageDiv);
+            });
+            
+            updateFilterInfo();
+        }
+
+        function applyFilter() {
+            const filterText = document.getElementById('filter-input').value.toLowerCase().trim();
+            currentFilter = filterText;
+            
+            if (!filterText) {
+                filteredMessages = [...allMessages];
+            } else {
+                filteredMessages = allMessages.filter(msg => 
+                    msg.text.toLowerCase().includes(filterText) ||
+                    msg.sender.toLowerCase().includes(filterText)
+                );
+            }
+            
+            displayMessages();
+        }
+
+        function clearFilter() {
+            document.getElementById('filter-input').value = '';
+            currentFilter = '';
+            filteredMessages = [...allMessages];
+            displayMessages();
+        }
+
+        function updateFilterInfo() {
+            const info = document.getElementById('filter-info');
+            if (currentFilter) {
+                info.textContent = `Showing ${filteredMessages.length} of ${allMessages.length} messages (filtered by "${currentFilter}")`;
+            } else {
+                info.textContent = `Showing all ${allMessages.length} messages`;
+            }
+        }
+
+        function showError(message) {
+            const error = document.getElementById('error');
+            error.textContent = message;
+            error.style.display = 'block';
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function exportThread() {
+            if (!conversationId) {
+                alert('No conversation ID available');
+                return;
+            }
+            
+            const exportUrl = `/thread/${conversationId}/export`;
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.download = `chatgpt_thread_${conversationId}.md`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Add enter key support for filter
+        document.getElementById('filter-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                applyFilter();
+            }
+        });
+
+        // Load thread when page loads
+        loadThread();
+    </script>
+</body>
+</html>
