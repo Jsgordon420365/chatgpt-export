@@ -233,13 +233,23 @@
 
         // Get conversation ID from URL
         const pathParts = window.location.pathname.split('/');
-        conversationId = pathParts[pathParts.length - 1];
+        conversationId = pathParts[pathParts.length - 2]; // Get the ID, not 'view'
+        
+        console.log('Thread page loaded, conversation ID:', conversationId);
 
         // Load thread data
         async function loadThread() {
+            console.log('Loading thread data for ID:', conversationId);
             try {
                 const response = await fetch(`/thread/${conversationId}`);
+                console.log('Response status:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
+                console.log('Thread data loaded:', data);
                 
                 if (data.error) {
                     showError(data.error);
@@ -252,9 +262,11 @@
                 document.getElementById('conversation-id').textContent = `ID: ${data.conversation_id}`;
                 document.getElementById('message-count').textContent = `${data.message_count} messages`;
                 
+                console.log('Displaying', allMessages.length, 'messages');
                 displayMessages();
                 
             } catch (error) {
+                console.error('Error loading thread:', error);
                 showError('Failed to load conversation: ' + error.message);
             }
         }
