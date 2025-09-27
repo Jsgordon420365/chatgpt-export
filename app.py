@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 import sqlite3
 import dateparser
 from datetime import datetime, timedelta
@@ -169,5 +169,97 @@ def search():
     finally:
         conn.close()
 
+@app.route('/export')
+def export_results():
+    query = request.args.get('query', '')
+    limit = request.args.get('limit', 'all')
+    
+    if not query:
+        return jsonify({'error': 'Query parameter is required'}), 400
+    
+    # Parse query
+    dates, keywords = parse_query(query)
+    
+    # Construct and execute SQL queries
+    count_query, messages_query, params = construct_sql_query(dates, keywords)
+    
+    try:
+        conn = sqlite3.connect('chatgpt_export.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get all messages (no limit for export)
+        if params:
+            cursor.execute(messages_query, params)
+        else:
+            cursor.execute(messages_query)
+        
+        rows = cursor.fetchall()
+        messages = [dict(row) for row in rows]
+        
+        # Generate Markdown content
+        markdown_content = generate_markdown_export(query, messages)
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"chatgpt_search_results_{timestamp}.md"
+        
+        return Response(
+            markdown_content,
+            mimetype='text/markdown',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'text/markdown; charset=utf-8'
+            }
+        )
+        
+    except Exception as e:
+        print(f"Export error: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+def generate_markdown_export(query, messages):
+    """Generate Markdown content from search results"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    markdown = f"""# ChatGPT Search Results
+
+**Search Query:** {query}  
+**Export Date:** {timestamp}  
+**Total Messages:** {len(messages)}
+
+---
+
+"""
+    
+    for i, msg in enumerate(messages, 1):
+        # Format timestamp
+        try:
+            msg_time = datetime.fromisoformat(msg['timestamp'].replace('Z', '+00:00'))
+            formatted_time = msg_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+        except:
+            formatted_time = msg['timestamp']
+        
+        # Determine sender display
+        sender = "You" if msg['sender'] == 'user' else "Assistant"
+        if msg['sender'] == 'tool':
+            sender = "Tool"
+        
+        # Add message to markdown
+        markdown += f"""## Message {i}
+
+**Conversation ID:** `{msg['conversation_id']}`  
+**Sender:** {sender}  
+**Timestamp:** {formatted_time}
+
+{msg['text']}
+
+---
+
+"""
+    
+    return markdown
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5001) 
+    app.run(debug=False, port=5001) 

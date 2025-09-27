@@ -172,7 +172,10 @@
         <div id="error" class="error" style="display: none;"></div>
         <div class="results-header" id="results-header" style="display: none;">
             <div class="selection-info" id="selection-info">0 messages selected</div>
-            <button class="export-button" id="export-button" disabled onclick="exportSelected()">Export Selected</button>
+            <div class="message-actions">
+                <button class="export-button" id="export-all-button" onclick="exportAllResults()">Export All Results</button>
+                <button class="export-button" id="export-button" disabled onclick="exportSelected()">Export Selected</button>
+            </div>
         </div>
         <div id="messages"></div>
     </div>
@@ -302,6 +305,27 @@
         function exportMessage(msg) {
             // Implement single message export functionality here
             console.log('Exporting single message:', msg);
+        }
+
+        function exportAllResults() {
+            const query = document.getElementById('query').value.trim();
+            if (!query) {
+                alert('Please enter a search query first');
+                return;
+            }
+
+            const limit = document.getElementById('limit').value;
+            
+            // Create download link
+            const exportUrl = `/export?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`;
+            
+            // Create temporary link and trigger download
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.download = 'chatgpt_search_results.md';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         // Add enter key support for search
